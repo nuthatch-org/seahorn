@@ -24,8 +24,8 @@ max_receipt_age_ns = 30_000_000_000
 aggregation_interval_secs = 60
 
 [backend]
-# PostgREST URL that the gateway proxies queries to
-postgrest_url = "http://localhost:3000"
+# PostgREST URL that the gateway proxies queries to (horizon-core: backend.upstream_url)
+upstream_url = "http://localhost:3000"
 
 [database]
 # Same Postgres instance as the main seahorn service

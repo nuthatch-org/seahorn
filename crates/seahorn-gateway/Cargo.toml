@@ -2,34 +2,15 @@
 name = "seahorn-gateway"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+description = "Horizon TAP v2 (GraphTally) payment gateway in front of the Seahorn query layer. Built on horizon-core."
 
 [[bin]]
 name = "seahorn-gateway"
 path = "src/main.rs"
 
 [dependencies]
-# Web
-axum = { version = "0.8", features = ["macros"] }
-tower-http = { version = "0.6", features = ["trace"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-
-# Database
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "tls-rustls", "migrate"] }
-tower_governor = { version = "0.8", features = ["axum"] }
-
-# EVM / crypto
-alloy = { version = "0.5", features = ["full"] }
-alloy-primitives = "0.8"
-alloy-sol-types = "0.8"
-k256 = { version = "0.13", features = ["ecdsa"] }
-hex = "0.4"
-
-# Config / serialization
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-
-# Runtime / utils
+horizon-core = { git = "https://github.com/lodestar-team/horizon-core", branch = "main" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 tracing = "0.1"

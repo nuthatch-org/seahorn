@@ -1,29 +1,15 @@
-use std::sync::Arc;
+//! seahorn-gateway — Horizon TAP v2 (GraphTally) payment layer in front of the Seahorn
+//! query layer (PostgREST over the indexer's Postgres sink).
+//!
+//! All payment machinery (receipt validation, RAV aggregation, on-chain collection,
+//! persistence, the TAP-gated reverse proxy) lives in `horizon-core`. This binary loads
+//! config and hands off: a consumer sends a signed `TAP-Receipt` header, the gateway
+//! verifies + meters it and proxies the request to `backend.upstream_url`.
+//!
+//! The Seahorn INDEXER (substrate → handler → sink) is a separate binary and is
+//! unaffected by this gateway.
 
-use alloy_primitives::B256;
-use axum::{extract::State, http::StatusCode, routing::{any, get}, Router};
-use std::net::SocketAddr;
-use reqwest::Client;
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
-
-mod aggregator;
-mod collector;
-mod config;
-mod db;
-mod proxy;
-mod tap;
-
-use config::Config;
-use db::Pool;
-
-/// Shared state injected into every Axum handler.
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Arc<Config>,
-    pub pool: Pool,
-    pub http_client: Client,
-    pub domain_sep: B256,
-}
+use horizon_core::Config;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -32,87 +18,16 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "seahorn_gateway=info".into()),
+                .unwrap_or_else(|_| "seahorn_gateway=info,horizon_core=info".into()),
         )
         .init();
 
-    let config = Arc::new(Config::load()?);
-
-    // Connect to Postgres and ensure TAP schema exists.
-    let pool = db::connect(&config.database.url).await?;
-    tracing::info!(url = %config.database.url, "database connected");
-
-    // Pre-compute EIP-712 domain separator.
-    let domain_sep = tap::domain_separator(
-        &config.tap.eip712_domain_name,
-        config.tap.eip712_chain_id,
-        config.tap.eip712_verifying_contract,
-    );
+    let config = Config::load()?;
     tracing::info!(
-        name = %config.tap.eip712_domain_name,
-        chain_id = config.tap.eip712_chain_id,
-        verifying_contract = %config.tap.eip712_verifying_contract,
-        domain_sep = %domain_sep,
-        "EIP-712 domain separator computed"
+        upstream = %config.backend.upstream_url,
+        data_service = %config.tap.data_service_address,
+        "seahorn-gateway starting — Solana data on Horizon"
     );
 
-    let http_client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
-
-    let state = AppState {
-        config: Arc::clone(&config),
-        pool: pool.clone(),
-        http_client,
-        domain_sep,
-    };
-
-    // Spawn background tasks.
-    aggregator::spawn(Arc::clone(&config), pool.clone());
-    collector::spawn(Arc::clone(&config), pool.clone());
-
-    // Build rate-limit governor — 1 token per (1000 / rps) ms, with burst.
-    let period_ms = 1_000u64 / config.rate_limit.requests_per_second.max(1) as u64;
-    let governor_conf = {
-        let mut b = GovernorConfigBuilder::default();
-        b.per_millisecond(period_ms)
-            .burst_size(config.rate_limit.burst_size);
-        Arc::new(b.finish().expect("invalid rate limit config"))
-    };
-    tracing::info!(
-        rps = config.rate_limit.requests_per_second,
-        burst = config.rate_limit.burst_size,
-        "rate limiter configured"
-    );
-
-    // Proxy routes are rate-limited; health probes are not.
-    let proxy_routes = Router::new()
-        .route("/{*path}", any(proxy::handler))
-        .route("/", any(proxy::handler))
-        .layer(GovernorLayer::new(Arc::clone(&governor_conf)));
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/ready", get(ready))
-        .merge(proxy_routes)
-        .with_state(state);
-
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    tracing::info!(%addr, postgrest = %config.backend.postgrest_url, "seahorn-gateway listening");
-
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
-
-    Ok(())
-}
-
-async fn health() -> StatusCode {
-    StatusCode::OK
-}
-
-async fn ready(State(state): State<AppState>) -> StatusCode {
-    match sqlx::query("SELECT 1").execute(&state.pool).await {
-        Ok(_) => StatusCode::OK,
-        Err(_) => StatusCode::SERVICE_UNAVAILABLE,
-    }
+    horizon_core::run(config).await
 }
