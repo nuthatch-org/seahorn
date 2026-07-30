@@ -2339,7 +2339,7 @@ dependencies = [
 [[package]]
 name = "horizon-core"
 version = "0.1.0"
-source = "git+https://github.com/lodestar-team/horizon-core?branch=main#f94d6f6d71bd2a66fb1b8805961caef0d45921d6"
+source = "git+https://github.com/nightswatchhq/horizon-core?branch=main#f94d6f6d71bd2a66fb1b8805961caef0d45921d6"
 dependencies = [
  "alloy",
  "alloy-primitives",
